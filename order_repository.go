@@ -1,0 +1,294 @@
+package main
+
+import (
+    "context"
+    "fmt"
+)
+
+type OrderRepository struct {
+    db *Postgres
+}
+
+func NewOrderRepository(db *Postgres) *OrderRepository {
+    return &OrderRepository{db: db}
+}
+
+// Сохранение заказа со всеми внутренностями в транзакции
+func (r *OrderRepository) SaveOrder(ctx context.Context, order Order) error {
+    tx, err := r.db.pool.Begin(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %v", err)
+    }
+    defer tx.Rollback(ctx)
+    
+    // Заказ
+    _, err = tx.Exec(ctx, `
+        INSERT INTO orders (
+            order_uid, track_number, entry, locale, internal_signature, 
+            customer_id, delivery_service, shardkey, sm_id, date_created, oof_shard
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (order_uid) DO UPDATE SET
+            track_number = EXCLUDED.track_number,
+            entry = EXCLUDED.entry,
+            locale = EXCLUDED.locale,
+            internal_signature = EXCLUDED.internal_signature,
+            customer_id = EXCLUDED.customer_id,
+            delivery_service = EXCLUDED.delivery_service,
+            shardkey = EXCLUDED.shardkey,
+            sm_id = EXCLUDED.sm_id,
+            date_created = EXCLUDED.date_created,
+            oof_shard = EXCLUDED.oof_shard
+    `, 
+        order.OrderUID, order.TrackNumber, order.Entry, order.Locale, order.InternalSignature,
+        order.CustomerID, order.DeliveryService, order.Shardkey, order.SMID, order.DateCreated, order.OofShard)
+    if err != nil {
+        return fmt.Errorf("failed to save order: %v", err)
+    }
+    
+    // Доставка
+    _, err = tx.Exec(ctx, `
+        INSERT INTO delivery (
+            order_uid, name, phone, zip, city, address, region, email
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (order_uid) DO UPDATE SET
+            name = EXCLUDED.name,
+            phone = EXCLUDED.phone,
+            zip = EXCLUDED.zip,
+            city = EXCLUDED.city,
+            address = EXCLUDED.address,
+            region = EXCLUDED.region,
+            email = EXCLUDED.email
+    `,
+        order.OrderUID, order.Delivery.Name, order.Delivery.Phone, order.Delivery.Zip,
+        order.Delivery.City, order.Delivery.Address, order.Delivery.Region, order.Delivery.Email)
+    if err != nil {
+        return fmt.Errorf("failed to save delivery: %v", err)
+    }
+    
+    // Оплата
+    _, err = tx.Exec(ctx, `
+        INSERT INTO payments (
+            transaction, order_uid, request_id, currency, provider, amount, 
+            payment_dt, bank, delivery_cost, goods_total, custom_fee
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (transaction) DO UPDATE SET
+            order_uid = EXCLUDED.order_uid,
+            request_id = EXCLUDED.request_id,
+            currency = EXCLUDED.currency,
+            provider = EXCLUDED.provider,
+            amount = EXCLUDED.amount,
+            payment_dt = EXCLUDED.payment_dt,
+            bank = EXCLUDED.bank,
+            delivery_cost = EXCLUDED.delivery_cost,
+            goods_total = EXCLUDED.goods_total,
+            custom_fee = EXCLUDED.custom_fee
+    `,
+        order.Payment.Transaction, order.OrderUID, order.Payment.RequestID, order.Payment.Currency,
+        order.Payment.Provider, order.Payment.Amount, order.Payment.PaymentDT,
+        order.Payment.Bank, order.Payment.DeliveryCost, order.Payment.GoodsTotal, order.Payment.CustomFee)
+    if err != nil {
+        return fmt.Errorf("failed to save payment: %v", err)
+    }
+    
+    // Товары
+    for _, item := range order.Items {
+        // Товар
+        _, err = tx.Exec(ctx, `
+            INSERT INTO items (
+                chrt_id, track_number, price, rid, name, sale, size, 
+                total_price, nm_id, brand, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (chrt_id) DO UPDATE SET
+                track_number = EXCLUDED.track_number,
+                price = EXCLUDED.price,
+                rid = EXCLUDED.rid,
+                name = EXCLUDED.name,
+              	sale = EXCLUDED.sale,
+                size = EXCLUDED.size,
+                total_price = EXCLUDED.total_price,
+                nm_id = EXCLUDED.nm_id,
+                brand = EXCLUDED.brand,
+                status = EXCLUDED.status
+        `,
+            item.ChrtID, item.TrackNumber, item.Price, item.RID, item.Name,
+            item.Sale, item.Size, item.TotalPrice, item.NMID, item.Brand, item.Status)
+        if err != nil {
+            return fmt.Errorf("failed to save item: %v", err)
+        }
+        
+        // Связь с заказом
+        _, err = tx.Exec(ctx, `
+            INSERT INTO order_items (order_uid, chrt_id)
+            VALUES ($1, $2)
+            ON CONFLICT (order_uid, chrt_id) DO NOTHING
+        `, order.OrderUID, item.ChrtID)
+        if err != nil {
+            return fmt.Errorf("failed to save order-item relation: %v", err)
+        }
+    }
+    
+    // Коммит транзакции
+    if err = tx.Commit(ctx); err != nil {
+        return fmt.Errorf("failed to commit transaction: %v", err)
+    }
+    
+    return nil
+}
+
+// Получение заказа по ID
+func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*Order, error) {
+    // Получаем заказ
+    var order Order
+    err := r.db.pool.QueryRow(ctx, `
+        SELECT order_uid, track_number, entry, locale, internal_signature, 
+               customer_id, delivery_service, shardkey, sm_id, date_created, oof_shard
+        FROM orders
+        WHERE order_uid = $1
+    `, orderUID).Scan(
+        &order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
+        &order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get order: %v", err)
+    }
+    
+    // Получаем доставку
+    err = r.db.pool.QueryRow(ctx, `
+        SELECT name, phone, zip, city, address, region, email
+        FROM delivery
+        WHERE order_uid = $1
+    `, orderUID).Scan(
+        &order.Delivery.Name, &order.Delivery.Phone, &order.Delivery.Zip,
+        &order.Delivery.City, &order.Delivery.Address, &order.Delivery.Region, &order.Delivery.Email)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get delivery: %v", err)
+    }
+    
+    // Получаем оплату
+    err = r.db.pool.QueryRow(ctx, `
+        SELECT transaction, request_id, currency, provider, amount, 
+               payment_dt, bank, delivery_cost, goods_total, custom_fee
+        FROM payments
+        WHERE order_uid = $1
+    `, orderUID).Scan(
+        &order.Payment.Transaction, &order.Payment.RequestID, &order.Payment.Currency,
+        &order.Payment.Provider, &order.Payment.Amount, &order.Payment.PaymentDT,
+        &order.Payment.Bank, &order.Payment.DeliveryCost, &order.Payment.GoodsTotal, &order.Payment.CustomFee)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get payment: %v", err)
+    }
+    
+    // Получаем товары
+    rows, err := r.db.pool.Query(ctx, `
+        SELECT i.chrt_id, i.track_number, i.price, i.rid, i.name, i.sale, i.size, 
+               i.total_price, i.nm_id, i.brand, i.status
+        FROM items i
+        JOIN order_items oi ON i.chrt_id = oi.chrt_id
+        WHERE oi.order_uid = $1
+    `, orderUID)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get items: %v", err)
+    }
+    defer rows.Close()
+    
+    for rows.Next() {
+        var item Item
+        if err := rows.Scan(
+            &item.ChrtID, &item.TrackNumber, &item.Price, &item.RID, &item.Name,
+            &item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
+        ); err != nil {
+            return nil, fmt.Errorf("failed to scan item: %v", err)
+        }
+        order.Items = append(order.Items, item)
+    }
+    
+    if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("error iterating items: %v", err)
+    }
+    
+    return &order, nil
+}
+
+// Получение всех заказов (для заполнения кэша при старте)
+func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]Order, error) {
+    ordersMap := make(map[string]Order)
+    
+    // Получаем все заказы
+    rows, err := r.db.pool.Query(ctx, `
+        SELECT order_uid, track_number, entry, locale, internal_signature, 
+               customer_id, delivery_service, shardkey, sm_id, date_created, oof_shard
+        FROM orders
+    `)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get all orders: %v", err)
+    }
+    defer rows.Close()
+    
+    for rows.Next() {
+        var order Order
+        if err := rows.Scan(
+            &order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
+            &order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard,
+        ); err != nil {
+            return nil, fmt.Errorf("failed to scan order: %v", err)
+        }
+        
+        // Получаем доставку для каждого заказа
+        err = r.db.pool.QueryRow(ctx, `
+            SELECT name, phone, zip, city, address, region, email
+            FROM delivery
+            WHERE order_uid = $1
+        `, order.OrderUID).Scan(
+            &order.Delivery.Name, &order.Delivery.Phone, &order.Delivery.Zip,
+            &order.Delivery.City, &order.Delivery.Address, &order.Delivery.Region, &order.Delivery.Email)
+        if err != nil {
+            return nil, fmt.Errorf("failed to get delivery for order %v: %v", order.OrderUID, err)
+        }
+        
+        // Получаем оплату для каждого заказа
+        err = r.db.pool.QueryRow(ctx, `
+            SELECT transaction, request_id, currency, provider, amount, 
+                   payment_dt, bank, delivery_cost, goods_total, custom_fee
+            FROM payments
+            WHERE order_uid = $1
+        `, order.OrderUID).Scan(
+            &order.Payment.Transaction, &order.Payment.RequestID, &order.Payment.Currency,
+            &order.Payment.Provider, &order.Payment.Amount, &order.Payment.PaymentDT,
+            &order.Payment.Bank, &order.Payment.DeliveryCost, &order.Payment.GoodsTotal, &order.Payment.CustomFee)
+        if err != nil {
+            return nil, fmt.Errorf("failed to get payment for order %v: %v", order.OrderUID, err)
+        }
+        
+        // Получаем товары для каждого заказа
+        itemRows, err := r.db.pool.Query(ctx, `
+            SELECT i.chrt_id, i.track_number, i.price, i.rid, i.name, i.sale, i.size, 
+                   i.total_price, i.nm_id, i.brand, i.status
+            FROM items i
+            JOIN order_items oi ON i.chrt_id = oi.chrt_id
+            WHERE oi.order_uid = $1
+        `, order.OrderUID)
+        if err != nil {
+            return nil, fmt.Errorf("failed to get items for order %v: %v", order.OrderUID, err)
+        }
+        
+        for itemRows.Next() {
+            var item Item
+            if err := itemRows.Scan(
+                &item.ChrtID, &item.TrackNumber, &item.Price, &item.RID, &item.Name,
+                &item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
+            ); err != nil {
+                itemRows.Close()
+                return nil, fmt.Errorf("failed to scan item for order %v: %v", order.OrderUID, err)
+            }
+            order.Items = append(order.Items, item)
+        }
+        itemRows.Close()
+        
+        ordersMap[order.OrderUID] = order
+    }
+    
+    if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("error iterating orders: %v", err)
+    }
+    
+    return ordersMap, nil
+}

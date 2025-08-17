@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Information</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        input[type="text"] {
+            width: 300px;
+            padding: 8px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .error {
+            color: #d32f2f;
+            margin-top: 10px;
+        }
+        .loading {
+            margin-top: 10px;
+            color: #1976d2;
+        }
+        .order-details {
+            margin-top: 20px;
+        }
+        .section {
+            margin-bottom: 20px;
+        }
+        .section h2 {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .item {
+            margin-bottom: 10px;
+        }
+        .item-label {
+            font-weight: bold;
+            display: inline-block;
+            width: 150px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Order Information</h1>
+    <p>Enter order ID to view details:</p>
+    
+    <div>
+        <input type="text" id="order-id" placeholder="Enter order UID">
+        <button onclick="getOrder()">Get Order</button>
+    </div>
+    
+    <div id="loading" class="loading" style="display: none;">Loading...</div>
+    <div id="error" class="error" style="display: none;"></div>
+    
+    <div id="order-details" class="container" style="display: none;">
+        <!-- Сюда будут подставляться данные -->
+    </div>
+
+    <script>
+        function getOrder() {
+            const orderId = document.getElementById('order-id').value.trim();
+            if (!orderId) {
+                showError("Please enter an order ID");
+                return;
+            }
+            
+            // Скрыть предыдущие результаты и показать индикатор загрузки
+            document.getElementById('order-details').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            
+            // Запрос к API
+            fetch(`/order/${encodeURIComponent(orderId)}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Order not found (status: ${response.status})`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    renderOrder(data);
+                })
+                .catch(error => {
+                    document.getElementById('loading').style.display = 'none';
+                    showError(error.message);
+                });
+        }
+        
+        function showError(message) {
+            const errorElement = document.getElementById('error');
+            errorElement.textContent = message;
+            errorElement.style.display = 'block';
+        }
+        
+        function renderOrder(order) {
+            let html = `
+                <div class="section">
+                    <h2>Order Details</h2>
+                    <div class="item"><span class="item-label">Order UID:</span> ${order.order_uid}</div>
+                    <div class="item"><span class="item-label">Track Number:</span> ${order.track_number}</div>
+                    <div class="item"><span class="item-label">Entry:</span> ${order.entry}</div>
+                    <div class="item"><span class="item-label">Locale:</span> ${order.locale}</div>
+                    <div class="item"><span class="item-label">Customer ID:</span> ${order.customer_id}</div>
+                    <div class="item"><span class="item-label">Date Created:</span> ${new Date(order.date_created).toLocaleString()}</div>
+                </div>
+                
+                <div class="section">
+                    <h2>Delivery</h2>
+                    <div class="item"><span class="item-label">Name:</span> ${order.delivery.name}</div>
+                    <div class="item"><span class="item-label">Phone:</span> ${order.delivery.phone}</div>
+                    <div class="item"><span class="item-label">Zip:</span> ${order.delivery.zip}</div>
+                    <div class="item"><span class="item-label">City:</span> ${order.delivery.city}</div>
+                    <div class="item"><span class="item-label">Address:</span> ${order.delivery.address}</div>
+                    <div class="item"><span class="item-label">Region:</span> ${order.delivery.region}</div>
+                    <div class="item"><span class="item-label">Email:</span> ${order.delivery.email}</div>
+                </div>
+                
+                <div class="section">
+                    <h2>Payment</h2>
+                    <div class="item"><span class="item-label">Transaction:</span> ${order.payment.transaction}</div>
+                    <div class="item"><span class="item-label">Currency:</span> ${order.payment.currency}</div>
+                    <div class="item"><span class="item-label">Provider:</span> ${order.payment.provider}</div>
+                    <div class="item"><span class="item-label">Amount:</span> ${order.payment.amount} ${order.payment.currency}</div>
+                    <div class="item"><span class="item-label">Payment Date:</span> ${new Date(order.payment.payment_dt * 1000).toLocaleString()}</div>
+                    <div class="item"><span class="item-label">Bank:</span> ${order.payment.bank}</div>
+                    <div class="item"><span class="item-label">Delivery Cost:</span> ${order.payment.delivery_cost}</div>
+                    <div class="item"><span class="item-label">Goods Total:</span> ${order.payment.goods_total}</div>
+                </div>
+                
+                <div class="section">
+                    <h2>Items</h2>
+            `;
+            
+            order.items.forEach(item => {
+                html += `
+                    <div class="item">
+                        <h3>${item.name}</h3>
+                        <div><span class="item-label">ID:</span> ${item.chrt_id}</div>
+                        <div><span class="item-label">Price:</span> ${item.price}</div>
+                        <div><span class="item-label">Size:</span> ${item.size}</div>
+                        <div><span class="item-label">Total Price:</span> ${item.total_price}</div>
+                        <div><span class="item-label">Brand:</span> ${item.brand}</div>
+                        <div><span class="item-label">Status:</span> ${item.status}</div>
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+            
+            const container = document.getElementById('order-details');
+            container.innerHTML = html;
+            container.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
