@@ -40,7 +40,7 @@ func main() {
     // Создание и заполнение кэша
     cache := NewCache()
     logger.Println("Загрузка кэша...")
-    ordersMap, err := repo.GetAllOrders(ctx)
+    ordersMap, err := repo.GetLastThreeOrders(ctx)
     if err != nil {
         logger.Fatalf("Ошибка загрузки кэша: %v", err)
     }
