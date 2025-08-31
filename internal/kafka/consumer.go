@@ -1,21 +1,23 @@
-package main
+package kafka
 
 import (
     "context"
     "encoding/json"
     "log"
-    
+    "l0/internal/cache"
+    "l0/internal/model"
+    "l0/internal/db"
     "github.com/segmentio/kafka-go"
 )
 
 type Consumer struct {
     reader   *kafka.Reader
-    repo     *OrderRepository
-    cache    *Cache
+    repo     *db.OrderRepository
+    cache    *cache.Cache
     logger   *log.Logger
 }
 
-func NewConsumer(brokers []string, repo *OrderRepository, cache *Cache, logger *log.Logger) *Consumer {
+func NewConsumer(brokers []string, repo *db.OrderRepository, cache *cache.Cache, logger *log.Logger) *Consumer {
     reader := kafka.NewReader(kafka.ReaderConfig{
         Brokers: brokers,
         Topic: "orders",
@@ -59,7 +61,7 @@ func (c *Consumer) Start(ctx context.Context) {
 }
 
 func (c *Consumer) processMessage(ctx context.Context, msg kafka.Message) {
-    var order Order
+    var order model.Order
     
     // Десериализация JSON
     if err := json.Unmarshal(msg.Value, &order); err != nil {

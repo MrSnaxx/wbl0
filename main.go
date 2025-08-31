@@ -2,24 +2,74 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"l0/internal/cache"
+	"l0/internal/db"
+	"l0/internal/http"
+	"l0/internal/kafka"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
-	"errors"
+
+	"github.com/joho/godotenv"
 )
 
+func getEnv(key, defaultValue string) string {
+    if value, exists := os.LookupEnv(key); exists {
+        return value
+    }
+    return defaultValue
+}
+
+
+// Получает ОБЯЗАТЕЛЬНУЮ переменную окружения
+func getRequiredEnv(key string) string {
+    value := os.Getenv(key)
+    if value == "" {
+        log.Fatalf("Ошибка: обязательная переменная %v не установлена", key)
+    }
+    return value
+}
+
+// Получает переменную окружения как целое число
+func getEnvAsInt(key string, defaultValue int) int {
+    strValue := getEnv(key, "")
+    if strValue == "" {
+        return defaultValue
+    }
+    
+    value, err := strconv.Atoi(strValue)
+    if err != nil {
+        log.Fatalf("Неверный формат %v: %v", key, strValue)
+    }
+    return value
+}
+
 func main() {
-    dbHost := "localhost"
-    dbPort := 5432
-    dbUser := "postgres"
-    dbPass := "admin"
-    dbName := "wbl0"
-    kafkaBrokers := "localhost:9092"
-    httpPort := 8081
+    if _, dockerEnv := os.LookupEnv("DOCKER_ENV"); dockerEnv {
+        // В Docker используем переменные окружения напрямую
+        return
+    }
+    
+    // Загружаем .env только в локальной среде
+    if err := godotenv.Load(); err != nil {
+        log.Println("Локальный .env файл не найден, используем системные переменные")
+    }
+
+    // Получаем параметры из окружения с проверкой
+    dbHost := getEnv("DB_HOST", "localhost")
+    dbPort := getEnvAsInt("DB_PORT", 5432)
+    dbUser := getEnv("DB_USER", "postgres")
+    dbPass := getRequiredEnv("DB_PASS") // Обязательный параметр
+    dbName := getEnv("DB_NAME", "wbl0")
+    kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
+    httpPort := getEnvAsInt("HTTP_PORT", 8081)
+
     flag.Parse()
     var ErrServerClosed = errors.New("http: Server closed")
     // Настройка логгера
@@ -29,16 +79,16 @@ func main() {
     connString := buildConnString(dbHost, dbPort, dbUser, dbPass, dbName)
     ctx := context.Background()
     
-    pg, err := NewPostgres(ctx, connString)
+    pg, err := db.NewPostgres(ctx, connString)
     if err != nil {
         logger.Fatalf("Ошибка подключения к БД: %v", err)
     }
     defer pg.Close()
     
-    repo := NewOrderRepository(pg)
+    repo := db.NewOrderRepository(pg)
     
     // Создание и заполнение кэша
-    cache := NewCache()
+    cache := cache.NewCache()
     logger.Println("Загрузка кэша...")
     ordersMap, err := repo.GetLastThreeOrders(ctx)
     if err != nil {
@@ -47,7 +97,7 @@ func main() {
     cache.Load(ordersMap)
     logger.Printf("%v заказов загружено в кэш", len(ordersMap))
     
-    kafkaConsumer := NewConsumer(
+    kafkaConsumer := kafka.NewConsumer(
         []string{kafkaBrokers},
         repo,
         cache,
@@ -55,7 +105,7 @@ func main() {
     )
     
     // Создание HTTP сервера
-    server := NewServer(httpPort, cache, repo, logger)
+    server := http.NewServer(httpPort, cache, repo, logger)
     
     stop := make(chan os.Signal, 1)
     signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

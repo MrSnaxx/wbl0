@@ -1,8 +1,9 @@
-package main
+package db
 
 import (
     "context"
     "fmt"
+    "l0/internal/model"
 )
 
 type OrderRepository struct {
@@ -14,7 +15,7 @@ func NewOrderRepository(db *Postgres) *OrderRepository {
 }
 
 // Сохранение заказа со всеми внутренностями в транзакции
-func (r *OrderRepository) SaveOrder(ctx context.Context, order Order) error {
+func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) error {
     tx, err := r.db.pool.Begin(ctx)
     if err != nil {
         return fmt.Errorf("failed to begin transaction: %v", err)
@@ -136,9 +137,9 @@ func (r *OrderRepository) SaveOrder(ctx context.Context, order Order) error {
 }
 
 // Получение заказа по ID
-func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*Order, error) {
+func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*model.Order, error) {
     // Получаем заказ
-    var order Order
+    var order model.Order
     err := r.db.pool.QueryRow(ctx, `
         SELECT order_uid, track_number, entry, locale, internal_signature, 
                customer_id, delivery_service, shardkey, sm_id, date_created, oof_shard
@@ -191,7 +192,7 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*O
     defer rows.Close()
     
     for rows.Next() {
-        var item Item
+        var item model.Item
         if err := rows.Scan(
             &item.ChrtID, &item.TrackNumber, &item.Price, &item.RID, &item.Name,
             &item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
@@ -209,8 +210,8 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*O
 }
 
 // Получение всех заказов (для заполнения кэша при старте)
-func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]Order, error) {
-    ordersMap := make(map[string]Order)
+func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]model.Order, error) {
+    ordersMap := make(map[string]model.Order)
     
     // Получаем все заказы
     rows, err := r.db.pool.Query(ctx, `
@@ -224,7 +225,7 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]Order, e
     defer rows.Close()
     
     for rows.Next() {
-        var order Order
+        var order model.Order
         if err := rows.Scan(
             &order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
             &order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard,
@@ -271,7 +272,7 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]Order, e
         }
         
         for itemRows.Next() {
-            var item Item
+            var item model.Item
             if err := itemRows.Scan(
                 &item.ChrtID, &item.TrackNumber, &item.Price, &item.RID, &item.Name,
                 &item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
@@ -293,8 +294,8 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]Order, e
     return ordersMap, nil
 }
 
-func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]Order, error) { // Получаем три последних заказа по дате
-    ordersMap := make(map[string]Order)
+func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]model.Order, error) { // Получаем три последних заказа по дате
+    ordersMap := make(map[string]model.Order)
     
     rows, err := r.db.pool.Query(ctx, `
         SELECT order_uid, track_number, entry, locale, internal_signature, 
@@ -309,7 +310,7 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]Or
     defer rows.Close()
     
     for rows.Next() {
-        var order Order
+        var order model.Order
         if err := rows.Scan(
             &order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
             &order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard,
@@ -353,7 +354,7 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]Or
         }
         
         for itemRows.Next() {
-            var item Item
+            var item model.Item
             if err := itemRows.Scan(
                 &item.ChrtID, &item.TrackNumber, &item.Price, &item.RID, &item.Name,
                 &item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,

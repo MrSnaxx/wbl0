@@ -1,4 +1,4 @@
-package main
+package http
 
 import (
     "context"
@@ -7,16 +7,19 @@ import (
     "net/http"
     "strconv"
     "time"
+
+    "l0/internal/cache"
+    "l0/internal/db"
 )
 
 type Server struct {
-    cache *Cache
-    repo *OrderRepository
+    cache *cache.Cache
+    repo *db.OrderRepository
     server *http.Server
     logger *log.Logger
 }
 
-func NewServer(port int, cache *Cache, repo *OrderRepository, logger *log.Logger) *Server {
+func NewServer(port int, cache *cache.Cache, repo *db.OrderRepository, logger *log.Logger) *Server {
     mux := http.NewServeMux()
     
     s := &Server{
@@ -39,7 +42,7 @@ func NewServer(port int, cache *Cache, repo *OrderRepository, logger *log.Logger
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-    http.ServeFile(w, r, "index.html")
+    http.ServeFile(w, r, "web/index.html")
 }
 
 func (s *Server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
