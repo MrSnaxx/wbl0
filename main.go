@@ -50,12 +50,7 @@ func getEnvAsInt(key string, defaultValue int) int {
     return value
 }
 
-func main() {
-    if _, dockerEnv := os.LookupEnv("DOCKER_ENV"); dockerEnv {
-        // В Docker используем переменные окружения напрямую
-        return
-    }
-    
+func main() {    
     // Загружаем .env только в локальной среде
     if err := godotenv.Load(); err != nil {
         log.Println("Локальный .env файл не найден, используем системные переменные")
