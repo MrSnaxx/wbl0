@@ -33,6 +33,7 @@ DB_PASS=your_password  # Обязательный параметр
 DB_NAME=wbl0
 KAFKA_BROKERS=localhost:9092
 HTTP_PORT=8081
+CACHE_SIZE=10
 ```
 
 ### Запуск

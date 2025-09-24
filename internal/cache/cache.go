@@ -1,70 +1,67 @@
 package cache
 
 import (
-    "sync"
-    "l0/internal/model"
+	"l0/internal/model"
+	"sync"
 )
 
 type Cache struct {
-    orders     map[string]model.Order
-    orderList  []string // для отслеживания порядка добавления
-    maxSize    int
-    mu         sync.RWMutex
+	orders      *sync.Map // Используем указатель для безопасной замены
+	orderList   []string
+	orderListMu sync.Mutex
+	maxSize     int
 }
 
-func NewCache() *Cache {
-    return &Cache{
-        orders:    make(map[string]model.Order),
-        orderList: make([]string, 0),
-        maxSize:   10,
-    }
+func NewCache(maxSize int) *Cache {
+	return &Cache{
+		orders:    &sync.Map{},
+		orderList: make([]string, 0),
+		maxSize:   maxSize,
+	}
 }
 
-// Загрузка данных в кэш (используется при старте)
 func (c *Cache) Load(orders map[string]model.Order) {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    
-    c.orders = orders
-    // Пересоздаем список порядка добавления
-    c.orderList = make([]string, 0, len(orders))
-    for uid := range orders {
-        c.orderList = append(c.orderList, uid)
-    }
-    c.evictIfNeeded()
+	newOrders := &sync.Map{}
+	for uid, order := range orders {
+		newOrders.Store(uid, order)
+	}
+	c.orders = newOrders // Атомарная замена указателя
+
+	c.orderListMu.Lock()
+	defer c.orderListMu.Unlock()
+	c.orderList = make([]string, 0, len(orders))
+	for uid := range orders {
+		c.orderList = append(c.orderList, uid)
+	}
+	c.evictIfNeeded()
 }
 
-// Получение заказа из кэша
 func (c *Cache) GetOrder(orderUID string) (model.Order, bool) {
-    c.mu.RLock()
-    defer c.mu.RUnlock()
-    
-    order, exists := c.orders[orderUID]
-    return order, exists
+	value, ok := c.orders.Load(orderUID)
+	if !ok {
+		return model.Order{}, false
+	}
+	order, ok := value.(model.Order)
+	return order, ok
 }
 
-// Добавление заказа в кэш
 func (c *Cache) SetOrder(order model.Order) {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    
-    // Если запись новая (не обновление существующей), добавляем в список
-    if _, exists := c.orders[order.OrderUID]; !exists {
-        c.orderList = append(c.orderList, order.OrderUID)
-    }
-    
-    c.orders[order.OrderUID] = order
-    c.evictIfNeeded()
+	_, exists := c.orders.Load(order.OrderUID)
+	if !exists {
+		c.orderListMu.Lock()
+		defer c.orderListMu.Unlock()
+		c.orderList = append(c.orderList, order.OrderUID)
+	}
+	c.orders.Store(order.OrderUID, order)
+	c.evictIfNeeded()
 }
 
-// Удаление старых записей, если превышен лимит
 func (c *Cache) evictIfNeeded() {
-    for len(c.orders) > c.maxSize {
-        // Удаляем самую старую запись
-        oldestUID := c.orderList[0]
-        delete(c.orders, oldestUID)
-        
-        // Удаляем из списка порядка
-        c.orderList = c.orderList[1:]
-    }
+	c.orderListMu.Lock()
+	defer c.orderListMu.Unlock()
+	for len(c.orderList) > c.maxSize {
+		oldestUID := c.orderList[0]
+		c.orders.Delete(oldestUID)
+		c.orderList = c.orderList[1:]
+	}
 }
