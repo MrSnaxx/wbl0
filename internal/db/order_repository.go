@@ -6,6 +6,12 @@ import (
 	"l0/internal/model"
 )
 
+type OrderStore interface {
+	SaveOrder(ctx context.Context, ord model.Order) error
+	GetOrderByID(ctx context.Context, orderUID string) (*model.Order, error)
+	GetAllOrders(ctx context.Context) (map[string]model.Order, error)
+}
+
 type OrderRepository struct {
 	db *Postgres
 }
@@ -15,7 +21,7 @@ func NewOrderRepository(db *Postgres) *OrderRepository {
 }
 
 // Сохранение заказа со всеми внутренностями в транзакции
-func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) error {
+func (r *OrderRepository) SaveOrder(ctx context.Context, ord model.Order) error {
 	tx, err := r.db.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
@@ -40,8 +46,8 @@ func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) erro
             date_created = EXCLUDED.date_created,
             oof_shard = EXCLUDED.oof_shard
     `,
-		order.OrderUID, order.TrackNumber, order.Entry, order.Locale, order.InternalSignature,
-		order.CustomerID, order.DeliveryService, order.Shardkey, order.SMID, order.DateCreated, order.OofShard)
+		ord.OrderUID, ord.TrackNumber, ord.Entry, ord.Locale, ord.InternalSignature,
+		ord.CustomerID, ord.DeliveryService, ord.Shardkey, ord.SMID, ord.DateCreated, ord.OofShard)
 	if err != nil {
 		return fmt.Errorf("failed to save order: %v", err)
 	}
@@ -60,8 +66,8 @@ func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) erro
             region = EXCLUDED.region,
             email = EXCLUDED.email
     `,
-		order.OrderUID, order.Delivery.Name, order.Delivery.Phone, order.Delivery.Zip,
-		order.Delivery.City, order.Delivery.Address, order.Delivery.Region, order.Delivery.Email)
+		ord.OrderUID, ord.Delivery.Name, ord.Delivery.Phone, ord.Delivery.Zip,
+		ord.Delivery.City, ord.Delivery.Address, ord.Delivery.Region, ord.Delivery.Email)
 	if err != nil {
 		return fmt.Errorf("failed to save delivery: %v", err)
 	}
@@ -84,15 +90,15 @@ func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) erro
             goods_total = EXCLUDED.goods_total,
             custom_fee = EXCLUDED.custom_fee
     `,
-		order.Payment.Transaction, order.OrderUID, order.Payment.RequestID, order.Payment.Currency,
-		order.Payment.Provider, order.Payment.Amount, order.Payment.PaymentDT,
-		order.Payment.Bank, order.Payment.DeliveryCost, order.Payment.GoodsTotal, order.Payment.CustomFee)
+		ord.Payment.Transaction, ord.OrderUID, ord.Payment.RequestID, ord.Payment.Currency,
+		ord.Payment.Provider, ord.Payment.Amount, ord.Payment.PaymentDT,
+		ord.Payment.Bank, ord.Payment.DeliveryCost, ord.Payment.GoodsTotal, ord.Payment.CustomFee)
 	if err != nil {
 		return fmt.Errorf("failed to save payment: %v", err)
 	}
 
 	// Товары
-	for _, item := range order.Items {
+	for _, item := range ord.Items {
 		// Товар
 		_, err = tx.Exec(ctx, `
             INSERT INTO items (
@@ -122,7 +128,7 @@ func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) erro
             INSERT INTO order_items (order_uid, chrt_id)
             VALUES ($1, $2)
             ON CONFLICT (order_uid, chrt_id) DO NOTHING
-        `, order.OrderUID, item.ChrtID)
+        `, ord.OrderUID, item.ChrtID)
 		if err != nil {
 			return fmt.Errorf("failed to save order-item relation: %v", err)
 		}
@@ -139,15 +145,15 @@ func (r *OrderRepository) SaveOrder(ctx context.Context, order model.Order) erro
 // Получение заказа по ID
 func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*model.Order, error) {
 	// Получаем заказ
-	var order model.Order
+	var ord model.Order
 	err := r.db.pool.QueryRow(ctx, `
         SELECT order_uid, track_number, entry, locale, internal_signature, 
                customer_id, delivery_service, shardkey, sm_id, date_created, oof_shard
         FROM orders
         WHERE order_uid = $1
     `, orderUID).Scan(
-		&order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
-		&order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard)
+		&ord.OrderUID, &ord.TrackNumber, &ord.Entry, &ord.Locale, &ord.InternalSignature,
+		&ord.CustomerID, &ord.DeliveryService, &ord.Shardkey, &ord.SMID, &ord.DateCreated, &ord.OofShard)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get order: %v", err)
 	}
@@ -158,8 +164,8 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*m
         FROM delivery
         WHERE order_uid = $1
     `, orderUID).Scan(
-		&order.Delivery.Name, &order.Delivery.Phone, &order.Delivery.Zip,
-		&order.Delivery.City, &order.Delivery.Address, &order.Delivery.Region, &order.Delivery.Email)
+		&ord.Delivery.Name, &ord.Delivery.Phone, &ord.Delivery.Zip,
+		&ord.Delivery.City, &ord.Delivery.Address, &ord.Delivery.Region, &ord.Delivery.Email)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get delivery: %v", err)
 	}
@@ -171,9 +177,9 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*m
         FROM payments
         WHERE order_uid = $1
     `, orderUID).Scan(
-		&order.Payment.Transaction, &order.Payment.RequestID, &order.Payment.Currency,
-		&order.Payment.Provider, &order.Payment.Amount, &order.Payment.PaymentDT,
-		&order.Payment.Bank, &order.Payment.DeliveryCost, &order.Payment.GoodsTotal, &order.Payment.CustomFee)
+		&ord.Payment.Transaction, &ord.Payment.RequestID, &ord.Payment.Currency,
+		&ord.Payment.Provider, &ord.Payment.Amount, &ord.Payment.PaymentDT,
+		&ord.Payment.Bank, &ord.Payment.DeliveryCost, &ord.Payment.GoodsTotal, &ord.Payment.CustomFee)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get payment: %v", err)
 	}
@@ -199,14 +205,14 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderUID string) (*m
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan item: %v", err)
 		}
-		order.Items = append(order.Items, item)
+		ord.Items = append(ord.Items, item)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating items: %v", err)
 	}
 
-	return &order, nil
+	return &ord, nil
 }
 
 // Получение всех заказов (для заполнения кэша при старте)
@@ -225,10 +231,10 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]model.Or
 	defer rows.Close()
 
 	for rows.Next() {
-		var order model.Order
+		var ord model.Order
 		if err := rows.Scan(
-			&order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
-			&order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard,
+			&ord.OrderUID, &ord.TrackNumber, &ord.Entry, &ord.Locale, &ord.InternalSignature,
+			&ord.CustomerID, &ord.DeliveryService, &ord.Shardkey, &ord.SMID, &ord.DateCreated, &ord.OofShard,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan order: %v", err)
 		}
@@ -238,11 +244,11 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]model.Or
             SELECT name, phone, zip, city, address, region, email
             FROM delivery
             WHERE order_uid = $1
-        `, order.OrderUID).Scan(
-			&order.Delivery.Name, &order.Delivery.Phone, &order.Delivery.Zip,
-			&order.Delivery.City, &order.Delivery.Address, &order.Delivery.Region, &order.Delivery.Email)
+        `, ord.OrderUID).Scan(
+			&ord.Delivery.Name, &ord.Delivery.Phone, &ord.Delivery.Zip,
+			&ord.Delivery.City, &ord.Delivery.Address, &ord.Delivery.Region, &ord.Delivery.Email)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get delivery for order %v: %v", order.OrderUID, err)
+			return nil, fmt.Errorf("failed to get delivery for order %v: %v", ord.OrderUID, err)
 		}
 
 		// Получаем оплату для каждого заказа
@@ -251,12 +257,12 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]model.Or
                    payment_dt, bank, delivery_cost, goods_total, custom_fee
             FROM payments
             WHERE order_uid = $1
-        `, order.OrderUID).Scan(
-			&order.Payment.Transaction, &order.Payment.RequestID, &order.Payment.Currency,
-			&order.Payment.Provider, &order.Payment.Amount, &order.Payment.PaymentDT,
-			&order.Payment.Bank, &order.Payment.DeliveryCost, &order.Payment.GoodsTotal, &order.Payment.CustomFee)
+        `, ord.OrderUID).Scan(
+			&ord.Payment.Transaction, &ord.Payment.RequestID, &ord.Payment.Currency,
+			&ord.Payment.Provider, &ord.Payment.Amount, &ord.Payment.PaymentDT,
+			&ord.Payment.Bank, &ord.Payment.DeliveryCost, &ord.Payment.GoodsTotal, &ord.Payment.CustomFee)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get payment for order %v: %v", order.OrderUID, err)
+			return nil, fmt.Errorf("failed to get payment for order %v: %v", ord.OrderUID, err)
 		}
 
 		// Получаем товары для каждого заказа
@@ -266,9 +272,9 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]model.Or
             FROM items i
             JOIN order_items oi ON i.chrt_id = oi.chrt_id
             WHERE oi.order_uid = $1
-        `, order.OrderUID)
+        `, ord.OrderUID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get items for order %v: %v", order.OrderUID, err)
+			return nil, fmt.Errorf("failed to get items for order %v: %v", ord.OrderUID, err)
 		}
 
 		for itemRows.Next() {
@@ -278,13 +284,13 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) (map[string]model.Or
 				&item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
 			); err != nil {
 				itemRows.Close()
-				return nil, fmt.Errorf("failed to scan item for order %v: %v", order.OrderUID, err)
+				return nil, fmt.Errorf("failed to scan item for order %v: %v", ord.OrderUID, err)
 			}
-			order.Items = append(order.Items, item)
+			ord.Items = append(ord.Items, item)
 		}
 		itemRows.Close()
 
-		ordersMap[order.OrderUID] = order
+		ordersMap[ord.OrderUID] = ord
 	}
 
 	if err := rows.Err(); err != nil {
@@ -310,10 +316,10 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]mo
 	defer rows.Close()
 
 	for rows.Next() {
-		var order model.Order
+		var ord model.Order
 		if err := rows.Scan(
-			&order.OrderUID, &order.TrackNumber, &order.Entry, &order.Locale, &order.InternalSignature,
-			&order.CustomerID, &order.DeliveryService, &order.Shardkey, &order.SMID, &order.DateCreated, &order.OofShard,
+			&ord.OrderUID, &ord.TrackNumber, &ord.Entry, &ord.Locale, &ord.InternalSignature,
+			&ord.CustomerID, &ord.DeliveryService, &ord.Shardkey, &ord.SMID, &ord.DateCreated, &ord.OofShard,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan order: %v", err)
 		}
@@ -322,11 +328,11 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]mo
             SELECT name, phone, zip, city, address, region, email
             FROM delivery
             WHERE order_uid = $1
-        `, order.OrderUID).Scan(
-			&order.Delivery.Name, &order.Delivery.Phone, &order.Delivery.Zip,
-			&order.Delivery.City, &order.Delivery.Address, &order.Delivery.Region, &order.Delivery.Email)
+        `, ord.OrderUID).Scan(
+			&ord.Delivery.Name, &ord.Delivery.Phone, &ord.Delivery.Zip,
+			&ord.Delivery.City, &ord.Delivery.Address, &ord.Delivery.Region, &ord.Delivery.Email)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get delivery for order %v: %v", order.OrderUID, err)
+			return nil, fmt.Errorf("failed to get delivery for order %v: %v", ord.OrderUID, err)
 		}
 
 		err = r.db.pool.QueryRow(ctx, `
@@ -334,12 +340,12 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]mo
                    payment_dt, bank, delivery_cost, goods_total, custom_fee
             FROM payments
             WHERE order_uid = $1
-        `, order.OrderUID).Scan(
-			&order.Payment.Transaction, &order.Payment.RequestID, &order.Payment.Currency,
-			&order.Payment.Provider, &order.Payment.Amount, &order.Payment.PaymentDT,
-			&order.Payment.Bank, &order.Payment.DeliveryCost, &order.Payment.GoodsTotal, &order.Payment.CustomFee)
+        `, ord.OrderUID).Scan(
+			&ord.Payment.Transaction, &ord.Payment.RequestID, &ord.Payment.Currency,
+			&ord.Payment.Provider, &ord.Payment.Amount, &ord.Payment.PaymentDT,
+			&ord.Payment.Bank, &ord.Payment.DeliveryCost, &ord.Payment.GoodsTotal, &ord.Payment.CustomFee)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get payment for order %v: %v", order.OrderUID, err)
+			return nil, fmt.Errorf("failed to get payment for order %v: %v", ord.OrderUID, err)
 		}
 
 		itemRows, err := r.db.pool.Query(ctx, `
@@ -348,9 +354,9 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]mo
             FROM items i
             JOIN order_items oi ON i.chrt_id = oi.chrt_id
             WHERE oi.order_uid = $1
-        `, order.OrderUID)
+        `, ord.OrderUID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get items for order %v: %v", order.OrderUID, err)
+			return nil, fmt.Errorf("failed to get items for order %v: %v", ord.OrderUID, err)
 		}
 
 		for itemRows.Next() {
@@ -360,13 +366,13 @@ func (r *OrderRepository) GetLastThreeOrders(ctx context.Context) (map[string]mo
 				&item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
 			); err != nil {
 				itemRows.Close()
-				return nil, fmt.Errorf("failed to scan item for order %v: %v", order.OrderUID, err)
+				return nil, fmt.Errorf("failed to scan item for order %v: %v", ord.OrderUID, err)
 			}
-			order.Items = append(order.Items, item)
+			ord.Items = append(ord.Items, item)
 		}
 		itemRows.Close()
 
-		ordersMap[order.OrderUID] = order
+		ordersMap[ord.OrderUID] = ord
 	}
 
 	if err := rows.Err(); err != nil {

@@ -13,14 +13,14 @@ import (
 )
 
 type Consumer struct {
-	reader *kafka.Reader
-	repo   *db.OrderRepository
-	cache  *cache.Cache
-	logger *log.Logger
-	val    *validator.Validate
+	reader       *kafka.Reader
+	repo         db.OrderStore
+	cachedOrders cache.CacheRepository
+	logger       *log.Logger
+	val          *validator.Validate
 }
 
-func NewConsumer(brokers []string, repo *db.OrderRepository, cache *cache.Cache, validator *validator.Validate, logger *log.Logger) *Consumer {
+func NewConsumer(brokers []string, repo db.OrderStore, cachedOrders cache.CacheRepository, validator *validator.Validate, logger *log.Logger) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:   brokers,
 		Topic:     "orders",
@@ -31,11 +31,11 @@ func NewConsumer(brokers []string, repo *db.OrderRepository, cache *cache.Cache,
 	})
 
 	return &Consumer{
-		reader: reader,
-		repo:   repo,
-		cache:  cache,
-		logger: logger,
-		val:    validator,
+		reader:       reader,
+		repo:         repo,
+		cachedOrders: cachedOrders,
+		logger:       logger,
+		val:          validator,
 	}
 }
 
@@ -92,7 +92,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg kafka.Message) {
 	}
 
 	// Обновление кэша
-	c.cache.SetOrder(order)
+	c.cachedOrders.SetOrder(order)
 
 	// Подтверждение обработки сообщения
 	if err := c.reader.CommitMessages(ctx, msg); err != nil {

@@ -5,6 +5,13 @@ import (
 	"sync"
 )
 
+type CacheRepository interface {
+	Load(orders map[string]model.Order)
+	GetOrder(orderUID string) (model.Order, bool)
+	SetOrder(order model.Order)
+	evictIfNeeded()
+}
+
 type Cache struct {
 	orders      *sync.Map // Используем указатель для безопасной замены
 	orderList   []string
@@ -57,8 +64,6 @@ func (c *Cache) SetOrder(order model.Order) {
 }
 
 func (c *Cache) evictIfNeeded() {
-	c.orderListMu.Lock()
-	defer c.orderListMu.Unlock()
 	for len(c.orderList) > c.maxSize {
 		oldestUID := c.orderList[0]
 		c.orders.Delete(oldestUID)

@@ -13,13 +13,13 @@ import (
 )
 
 type Server struct {
-	cache  *cache.Cache
-	repo   *db.OrderRepository
+	cache  cache.CacheRepository
+	repo   db.OrderStore
 	server *http.Server
 	logger *log.Logger
 }
 
-func NewServer(port int, cache *cache.Cache, repo *db.OrderRepository, logger *log.Logger) *Server {
+func NewServer(port int, cache cache.CacheRepository, repo db.OrderStore, logger *log.Logger) *Server {
 	mux := http.NewServeMux()
 
 	s := &Server{
